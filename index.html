@@ -1,0 +1,874 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Walli — Stylist Survey</title>
+<!-- Offline edition (2026-11-07): same survey as the Apps Script web app, packaged as a home-screen
+     web app. Caches itself on first load (sw.js), saves responses on-device, and POSTs them to the
+     Apps Script /exec endpoint (doPost) whenever there is signal. Same sheet, same tabs, same columns. -->
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#FFFDF9" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#17120D" media="(prefers-color-scheme: dark)">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Walli Survey">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="icon" href="icon-192.png">
+<style>
+  :root {
+    --paper: #FFFDF9;
+    --ink: #2B2118;
+    --muted: #8A7A68;
+    --amber: #C77416;
+    --amber-soft: #FBEFDF;
+    --line: #EADFD0;
+    --card: #FFFFFF;
+    --good: #2E7D4F;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper: #17120D;
+      --ink: #F3EADF;
+      --muted: #A6947F;
+      --amber: #E89240;
+      --amber-soft: #2E2114;
+      --line: #3A2F22;
+      --card: #201A13;
+      --good: #5BBD87;
+    }
+  }
+
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    -webkit-tap-highlight-color: transparent;
+    overscroll-behavior: none;
+  }
+
+  #app {
+    min-height: 100dvh;
+    display: flex;
+    flex-direction: column;
+    max-width: 720px;
+    margin: 0 auto;
+    padding: max(16px, env(safe-area-inset-top)) 24px max(16px, env(safe-area-inset-bottom));
+  }
+
+  header {
+    display: flex; align-items: center; justify-content: space-between;
+    min-height: 52px; gap: 12px;
+  }
+  .wm { font-weight: 800; letter-spacing: -0.04em; font-size: 26px; user-select: none; }
+  .wm em { font-style: normal; color: var(--amber); }
+  .back {
+    appearance: none; border: none; background: none; color: var(--muted);
+    font-size: 17px; font-weight: 600; padding: 10px 14px 10px 0; cursor: pointer;
+    visibility: hidden;
+  }
+  .back.show { visibility: visible; }
+
+  .progress { height: 4px; border-radius: 2px; background: var(--line); overflow: hidden; margin: 4px 0 0; }
+  .progress > div { height: 100%; background: var(--amber); border-radius: 2px; width: 0%; transition: width .3s ease; }
+
+  main { flex: 1; display: flex; flex-direction: column; justify-content: center; padding: 24px 0; }
+  .kicker {
+    text-transform: uppercase; letter-spacing: .14em; font-size: 13px; font-weight: 700;
+    color: var(--amber); margin: 0 0 10px;
+  }
+  h1 {
+    font-size: clamp(28px, 5.5vw, 40px); line-height: 1.12; font-weight: 800;
+    letter-spacing: -0.02em; margin: 0 0 8px; text-wrap: balance;
+  }
+  .sub { font-size: clamp(17px, 2.6vw, 20px); line-height: 1.45; color: var(--muted); margin: 0 0 28px; max-width: 34em; }
+  .sub strong { color: var(--ink); font-weight: 650; }
+  .sub .pick-count { color: var(--amber); font-weight: 700; }
+
+  .opts { display: flex; flex-direction: column; gap: 12px; }
+  .opts.compact { gap: 10px; }
+  .opts.compact .opt { min-height: 58px; padding: 14px 20px; font-size: clamp(17px, 2.6vw, 20px); }
+  .opt {
+    appearance: none; text-align: left; cursor: pointer;
+    background: var(--card); color: var(--ink);
+    border: 1.5px solid var(--line); border-radius: 18px;
+    min-height: 68px; padding: 18px 22px;
+    font-size: clamp(18px, 3vw, 22px); font-weight: 600; font-family: inherit;
+    display: flex; align-items: center; gap: 14px;
+    transition: transform .08s ease, background .12s ease, border-color .12s ease;
+  }
+  .opt:active { transform: scale(.985); }
+  .opt.picked { background: var(--amber-soft); border-color: var(--amber); }
+  .opt.maxed:not(.picked) { opacity: .45; }
+  .opt:focus-visible, .btn:focus-visible, .back:focus-visible, .count:focus-visible {
+    outline: 3px solid var(--amber); outline-offset: 2px;
+  }
+
+  .btn {
+    appearance: none; border: none; cursor: pointer; font-family: inherit;
+    background: var(--amber); color: #FFFDF9;
+    font-size: 20px; font-weight: 700; border-radius: 18px;
+    min-height: 64px; padding: 16px 32px;
+    transition: transform .08s ease, opacity .12s ease;
+  }
+  .btn:active { transform: scale(.985); }
+  .btn.ghost { background: var(--card); color: var(--ink); border: 1.5px solid var(--line); }
+  .btn.small { min-height: 48px; font-size: 16px; padding: 10px 20px; border-radius: 12px; }
+  .btn[disabled] { opacity: .45; cursor: default; }
+
+  .pilot-card {
+    background: var(--amber-soft); border: 1.5px solid var(--amber);
+    border-radius: 20px; padding: 22px 24px; margin: 0 0 18px;
+  }
+  .pilot-card h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .12em; color: var(--amber); margin: 0 0 6px; }
+  .pilot-card h2 + .perk { padding-top: 2px; }
+  .pilot-card .perk { display: flex; align-items: baseline; gap: 10px; font-size: clamp(17px, 2.8vw, 20px); font-weight: 700; padding: 5px 0; }
+  .pilot-card .perk span:first-child { color: var(--amber); }
+  .pilot-card .perk small { display: block; font-size: 14px; font-weight: 600; color: var(--muted); margin-top: 2px; }
+  .pilot-card .ask { margin-top: 12px; }
+  .pilot-card .ask .perk { font-weight: 600; font-size: clamp(16px, 2.5vw, 18px); }
+  .pilot-close { font-size: 15px; color: var(--muted); font-weight: 600; margin: 0 0 22px; }
+  .price-day { display: flex; align-items: baseline; gap: 12px; margin: 6px 0 18px; }
+  .price-day .amt { font-size: clamp(56px, 10vw, 84px); font-weight: 800; letter-spacing: -0.04em; color: var(--amber); line-height: 1; }
+  .price-day .unit { font-size: clamp(20px, 3vw, 26px); font-weight: 700; color: var(--ink); }
+
+  .field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 16px; }
+  .field label { font-size: 15px; font-weight: 700; letter-spacing: .02em; }
+  .field label small { color: var(--muted); font-weight: 600; }
+  .field input {
+    font-family: inherit; font-size: 20px; color: var(--ink);
+    background: var(--card); border: 1.5px solid var(--line); border-radius: 14px;
+    min-height: 60px; padding: 14px 18px; width: 100%;
+  }
+  .field input:focus { outline: none; border-color: var(--amber); }
+  .field select {
+    font-family: inherit; font-size: 20px; color: var(--ink); appearance: none;
+    background: var(--card) url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="18" height="10"><path d="M1 1l8 8 8-8" fill="none" stroke="%238A7A68" stroke-width="2"/></svg>') no-repeat right 18px center;
+    border: 1.5px solid var(--line); border-radius: 14px;
+    min-height: 60px; padding: 14px 48px 14px 18px; width: 100%;
+  }
+  .field select:focus { outline: none; border-color: var(--amber); }
+  .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .field.money { max-width: 22em; margin-bottom: 22px; }
+  .money-row { display: flex; align-items: center; gap: 10px; }
+  .money-row .cur { font-size: 34px; font-weight: 800; color: var(--amber); }
+  .money-row input { font-size: 34px; font-weight: 800; letter-spacing: -0.02em; min-height: 76px; flex: 1; font-variant-numeric: tabular-nums; }
+  .money-row .per { font-size: 17px; font-weight: 600; color: var(--muted); white-space: nowrap; }
+  @media (max-width: 520px) { .field-row { grid-template-columns: 1fr; } }
+  .skip-btn {
+    appearance: none; cursor: pointer; font-family: inherit;
+    background: var(--card); color: var(--muted); border: 1.5px solid var(--line);
+    border-radius: 999px; font-size: 14px; font-weight: 700;
+    padding: 8px 18px; display: none;
+  }
+  .skip-btn.show { display: block; }
+
+  .done-wrap { text-align: center; }
+  .done-mark { font-size: 64px; line-height: 1; margin-bottom: 16px; }
+
+  footer { display: flex; justify-content: space-between; align-items: center; min-height: 40px; gap: 10px; }
+  .motto { font-size: 13px; letter-spacing: .04em; color: var(--muted); }
+  .stop-tag { font-size: 13px; color: var(--muted); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 40%; }
+  .count {
+    appearance: none; border: none; background: none; cursor: pointer; font-family: inherit;
+    color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; padding: 10px 0 10px 14px;
+    margin-left: auto;
+  }
+  .sync-btn {
+    appearance: none; cursor: pointer; font-family: inherit;
+    background: var(--amber); color: #FFFDF9; border: none; border-radius: 999px;
+    font-size: 14px; font-weight: 700; padding: 10px 16px; min-height: 40px;
+    white-space: nowrap; display: none;
+  }
+  .sync-btn.show { display: inline-block; }
+  .sync-btn.ghost { background: var(--card); color: var(--muted); border: 1.5px solid var(--line); }
+  .sync-btn.ok { background: var(--good); color: #fff; }
+  .sync-btn[disabled] { opacity: .6; cursor: default; }
+
+  .results h1 { font-size: 30px; }
+  .stat-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin: 18px 0 26px; }
+  .tile { background: var(--card); border: 1.5px solid var(--line); border-radius: 16px; padding: 16px 18px; }
+  .tile .n { font-size: 34px; font-weight: 800; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
+  .tile .l { font-size: 13px; color: var(--muted); font-weight: 600; margin-top: 2px; }
+  .tile .t { font-size: 12px; color: var(--muted); margin-top: 4px; }
+  .dist { margin: 0 0 26px; }
+  .dist h2 { font-size: 15px; text-transform: uppercase; letter-spacing: .1em; color: var(--muted); margin: 0 0 10px; }
+  .bar-row { display: grid; grid-template-columns: 11em 1fr 2.5em; align-items: center; gap: 10px; padding: 4px 0; font-size: 15px; }
+  .bar-row .lbl { font-weight: 600; line-height: 1.2; }
+  .bar-track { background: var(--line); border-radius: 4px; height: 14px; overflow: hidden; }
+  .bar-fill { background: var(--amber); height: 100%; border-radius: 4px; min-width: 2px; }
+  .bar-row .val { text-align: right; font-variant-numeric: tabular-nums; color: var(--muted); font-weight: 600; }
+  table.leads { width: 100%; border-collapse: collapse; font-size: 15px; margin-bottom: 26px; }
+  table.leads th { text-align: left; font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); padding: 8px 10px; border-bottom: 1.5px solid var(--line); }
+  table.leads td { padding: 10px; border-bottom: 1px solid var(--line); }
+  .table-scroll { overflow-x: auto; }
+  .results-actions { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+  .sync-note { font-size: 14px; color: var(--muted); font-weight: 600; }
+  .sync-note.ok { color: var(--good); }
+  .stop-row { display: flex; gap: 10px; align-items: center; margin: 0 0 22px; flex-wrap: wrap; }
+  .stop-row .field { flex: 1 1 260px; margin: 0; }
+  .stop-row .field input { min-height: 48px; font-size: 17px; }
+  .stop-row .hint { flex-basis: 100%; font-size: 13px; color: var(--muted); }
+
+  @media (prefers-reduced-motion: reduce) {
+    .opt, .btn, .progress > div { transition: none; }
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <button class="back" id="backBtn" aria-label="Go back">‹ Back</button>
+    <div class="wm" aria-label="Walli">W<em>A</em>LL<em>I</em></div>
+    <div style="width:64px"></div>
+  </header>
+  <div class="progress" aria-hidden="true"><div id="bar"></div></div>
+  <main id="screen"></main>
+  <footer>
+    <span class="motto">Leave the reception to us.</span>
+    <span class="stop-tag" id="stopTag"></span>
+    <button class="count" id="countBtn" aria-label="View results"></button>
+    <button class="sync-btn" id="syncFooterBtn" aria-label="Sync saved responses to the Google Sheet">Sync now</button>
+    <button class="skip-btn" id="skipBtn" aria-label="Skip this page">Skip ›</button>
+  </footer>
+</div>
+
+<script>
+(() => {
+  'use strict';
+  const KEY = 'walli_survey_responses_v1';   // response store — unchanged across versions so old rows keep syncing
+  const STOP_KEY = 'walli_survey_stop';       // founder-set "current stop" (building) — prefills the contact page
+  const SURVEY_VERSION = 'v3.1';              // 2026-10-25: Wall, features, open price field (no bands), booking app, phone line/number, building, per-day pilot price
+  // ---- Sync target: the Apps Script web app (doPost). Token must match SYNC_TOKEN in Code.gs. ----
+  const SYNC_URL = 'https://script.google.com/a/macros/walliagent.ai/s/AKfycbzoHn744EU6TJ3DknZqmAHP7puKLt3jvroisWp8ik0iAtdu9G1vorFnPnazR1wpoY_FHg/exec';
+  const SYNC_TOKEN = 'c85a01e292c1e5da3a695f2812586919';
+
+  // ---- Pilot offer (edit here; mirrors the Founding Ten wording in the vault's Pilots note) ----
+  // Kyle, 2026-10-25: stylists see ONE number, framed per day. No monthly figure, no founder-rate line.
+  // $8/day ≈ the $249/mo regular price from the 2026-10-24 meeting (249 ÷ 30.4 = $8.19). Change here only.
+  const PRICE_PER_DAY = 8;
+  const PRICE_REGULAR = 249;   // founder-view analysis only (the "at or above" tile) — never shown to stylists
+  const PILOT_SPOTS = 10;
+
+  const QUESTIONS = [
+    {
+      id: 'calls',
+      title: 'When your hands are busy, what happens to your calls?',
+      sub: 'Tap all that apply.',
+      multi: true,
+      opts: ['They go to voicemail', 'Clients text me instead', 'I answer mid-appointment', 'A front desk handles it', 'Honestly — I just miss them'],
+    },
+    {
+      id: 'missed',
+      title: 'In a typical week, how many new-client calls or messages slip by?',
+      opts: ['Almost none', '1–2', '3–5', '6–10', 'More than 10'],
+    },
+    {
+      id: 'time',
+      title: 'How much time a week do you spend on the phone — booking, rescheduling, texting back?',
+      opts: ['Under an hour', '1–3 hours', '3–5 hours', '5–10 hours', 'More than 10 hours'],
+    },
+    {
+      id: 'app',
+      title: 'How do clients book with you today?',
+      sub: 'Tap all that apply.',
+      multi: true,
+      compact: true,
+      opts: ['GlossGenius', 'Vagaro', 'Booksy', 'Square Appointments', 'StyleSeat', 'Another app', 'My own website', 'Texts, DMs & my paper book'],
+    },
+    {
+      id: 'use',
+      title: 'Would you use it?',
+      sub: '<strong>Walli answers your phone for you</strong> — books, reschedules, and cancels appointments, answers questions, and texts clients back. 24/7, even while your hands are busy.',
+      opts: ['Definitely', 'Probably', 'Maybe', 'Probably not', 'No'],
+    },
+    {
+      id: 'features',
+      title: 'Which three would actually change your week?',
+      sub: '<span class="pick-count">Pick your top 3.</span>',
+      multi: true,
+      max: 3,
+      compact: true,
+      opts: [
+        'Answers my calls and books the appointment',
+        'Texts clients back and books by text',
+        'Automatic reminders and confirmations',
+        'One-tap rebooking of my regulars',
+        '“Book now” — squeeze someone in or double-book, my call',
+        'A waitlist that fills cancellations for me',
+        'Deposits or card on file for no-shows',
+        'Moves my clients and schedule over from my current app',
+      ],
+    },
+    {
+      id: 'wall',
+      title: 'Would you want a screen on your wall?',
+      sub: 'An iPad mounted in your suite, always on: <strong>your day, your messages, one tap to book</strong> — no digging your phone out of your apron.',
+      opts: ['Yes — I’d love that', 'Nice, but I’d mostly use my phone', 'No — my phone is enough', 'Not sure'],
+    },
+    {
+      id: 'pay',
+      title: 'What would feel fair per month?',
+      sub: 'For a receptionist that never misses a call — gut answer, no wrong one. <strong>Their number, not ours</strong> — ask, then type it.',
+      input: true,  // open field, no price anchors (Kyle, 2026-10-25)
+    },
+    {
+      id: 'number',
+      title: 'If Walli answered for you, which number should it be?',
+      opts: ['Keep my current number — forward it to Walli', 'A new, separate business number', 'Not sure — walk me through it'],
+    },
+  ];
+
+  const FLOW = ['welcome', 'contact', ...QUESTIONS.map(q => 'q_' + q.id), 'pilot', 'done'];
+  const TOTAL_Q = QUESTIONS.length + 1; // + the pilot question
+
+  let answers = {};
+  let step = 'welcome';
+  let history = [];
+  let syncing = false;
+
+  const $ = (sel) => document.querySelector(sel);
+  const screen = $('#screen');
+  const bar = $('#bar');
+  const backBtn = $('#backBtn');
+  const countBtn = $('#countBtn');
+  const stopTag = $('#stopTag');
+  let resetTimer = null;
+
+  const load = () => { try { return JSON.parse(localStorage.getItem(KEY)) || []; } catch { return []; } };
+  const store = (arr) => localStorage.setItem(KEY, JSON.stringify(arr));
+  const getStop = () => { try { return localStorage.getItem(STOP_KEY) || ''; } catch { return ''; } };
+  const setStop = (v) => { try { localStorage.setItem(STOP_KEY, v); } catch {} refreshStop(); };
+  function refreshStop() {
+    const s = getStop();
+    stopTag.textContent = s ? '📍 ' + s : '';
+  }
+
+  /* ---------- Drive sync (Google Sheet via Apps Script doPost) ---------- */
+  // Offline edition: no google.script.run here — rows are POSTed as text/plain JSON (no CORS preflight)
+  // to the /exec URL. Apps Script answers through a 302 → googleusercontent; fetch follows it.
+  // Rows stay marked unsynced until the sheet confirms their timestamps, and the backend dedupes on ts.
+  let lastSyncError = '';
+  function trySync(onDone) {
+    if (syncing) { if (onDone) onDone(false); return; }
+    const all = load();
+    const pending = all.filter(r => !r._synced);
+    if (!pending.length) { if (onDone) onDone(true); return; }
+    if (!navigator.onLine) { lastSyncError = 'offline'; if (onDone) onDone(false); return; }
+    syncing = true;
+    refreshCount();
+    const payload = pending.map(({ _synced, ...r }) => r);
+    const ctrl = ('AbortController' in window) ? new AbortController() : null;
+    const timer = ctrl ? setTimeout(() => ctrl.abort(), 25000) : null;
+    fetch(SYNC_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({ token: SYNC_TOKEN, rows: payload }),
+      signal: ctrl ? ctrl.signal : undefined,
+    })
+      .then(r => r.text())
+      .then(txt => {
+        let res = null;
+        try { res = JSON.parse(txt); } catch { res = null; }
+        if (!res || !res.ok) throw new Error((res && res.error) || 'bad response');
+        const sent = new Set((res.ts || []).map(String));
+        const updated = load().map(r => sent.has(String(r.ts)) ? { ...r, _synced: true } : r);
+        store(updated);
+        lastSyncError = '';
+        syncing = false;
+        refreshCount();
+        if (onDone) onDone(true);
+      })
+      .catch(err => {
+        lastSyncError = (err && err.name === 'AbortError') ? 'timeout' : 'error';
+        syncing = false;
+        refreshCount();
+        if (onDone) onDone(false);
+      })
+      .finally(() => { if (timer) clearTimeout(timer); });
+  }
+  window.addEventListener('online', () => { refreshCount(); trySync(); });
+  setInterval(() => trySync(), 60000);
+
+  function saveResponse() {
+    if (answers._preview) return;
+    const all = load();
+    all.push({ ts: new Date().toISOString(), version: SURVEY_VERSION, ...answers, _synced: false });
+    store(all);
+    trySync();
+  }
+
+  const syncFooterBtn = $('#syncFooterBtn');
+  let syncFlash = null;
+  function refreshCount() {
+    const all = load();
+    const pending = all.filter(r => !r._synced).length;
+    countBtn.textContent = all.length + ' saved' + (pending ? ' · ' + pending + ' pending' : '');
+    if (syncFlash) return; // a result message is showing — leave it until it clears
+    syncFooterBtn.classList.toggle('show', step === 'welcome' && pending > 0);
+    syncFooterBtn.classList.remove('ok', 'ghost');
+    syncFooterBtn.disabled = syncing;
+    syncFooterBtn.textContent = syncing ? 'Syncing…' : (navigator.onLine ? 'Sync ' + pending + ' now' : pending + ' waiting · no signal');
+    if (!navigator.onLine) syncFooterBtn.classList.add('ghost');
+  }
+  function flashSync(text, cls) {
+    clearTimeout(syncFlash);
+    syncFooterBtn.classList.add('show');
+    syncFooterBtn.classList.remove('ok', 'ghost');
+    if (cls) syncFooterBtn.classList.add(cls);
+    syncFooterBtn.disabled = false;
+    syncFooterBtn.textContent = text;
+    syncFlash = setTimeout(() => { syncFlash = null; refreshCount(); }, 2500);
+  }
+  syncFooterBtn.addEventListener('click', () => {
+    if (syncing) return;
+    if (!navigator.onLine) { flashSync('No signal — will retry', 'ghost'); return; }
+    trySync((ok) => {
+      const left = load().filter(r => !r._synced).length;
+      if (ok && !left) flashSync('Synced ✓ all in the sheet', 'ok');
+      else if (ok) flashSync(left + ' still waiting', 'ghost');
+      else flashSync(lastSyncError === 'offline' ? 'No signal — will retry' : 'Sync failed — will retry', 'ghost');
+    });
+  });
+  window.addEventListener('offline', () => refreshCount());
+
+  function go(next, push = true) {
+    clearTimeout(resetTimer);
+    if (push && step !== next) history.push(step);
+    step = next;
+    render();
+  }
+
+  function goBack() {
+    if (!history.length) return;
+    clearTimeout(resetTimer);
+    step = history.pop();
+    render();
+  }
+  backBtn.addEventListener('click', goBack);
+  countBtn.addEventListener('click', () => { if (step === 'welcome') go('results'); });
+
+  // Temporary founder walkthrough control — remove for the field version.
+  const skipBtn = $('#skipBtn');
+  skipBtn.addEventListener('click', () => {
+    if (step === 'contact' && !answers.name) answers._preview = true;
+    if (step === 'pilot') saveResponse();
+    go(FLOW[FLOW.indexOf(step) + 1]);
+  });
+
+  function restart() {
+    answers = {};
+    history = [];
+    go('welcome', false);
+  }
+
+  function progressFor() {
+    const i = FLOW.indexOf(step);
+    if (i <= 0) return 0;
+    return (i / (FLOW.length - 1)) * 100;
+  }
+
+  function optButtons(list, onPick, compact) {
+    const wrap = document.createElement('div');
+    wrap.className = 'opts' + (compact ? ' compact' : '');
+    list.forEach(label => {
+      const b = document.createElement('button');
+      b.className = 'opt';
+      b.textContent = label;
+      b.addEventListener('click', () => {
+        wrap.querySelectorAll('.opt').forEach(x => x.classList.remove('picked'));
+        b.classList.add('picked');
+        setTimeout(() => onPick(label), 240);
+      });
+      wrap.appendChild(b);
+    });
+    return wrap;
+  }
+
+  function html(strings, ...vals) {
+    const div = document.createElement('div');
+    div.innerHTML = strings.reduce((a, s, i) => a + s + (vals[i] ?? ''), '');
+    return div;
+  }
+
+  function render() {
+    screen.innerHTML = '';
+    bar.style.width = progressFor() + '%';
+    backBtn.classList.toggle('show', history.length > 0 && step !== 'done' && step !== 'welcome');
+    refreshCount();
+    refreshStop();
+    countBtn.style.visibility = (step === 'welcome') ? 'visible' : 'hidden';
+    const fi = FLOW.indexOf(step);
+    skipBtn.classList.toggle('show', fi > 0 && fi < FLOW.indexOf('done'));
+
+    if (step === 'welcome') {
+      const v = html`
+        <p class="kicker">90-second survey</p>
+        <h1>Help us build the receptionist you deserve.</h1>
+        <p class="sub">A few quick taps — and a founder’s deal at the end for the right stylist.</p>`;
+      const b = document.createElement('button');
+      b.className = 'btn'; b.textContent = 'Start';
+      b.addEventListener('click', () => go('contact'));
+      v.appendChild(b);
+      screen.appendChild(v);
+      trySync();
+      return;
+    }
+
+    if (step === 'contact') {
+      const building = answers.building != null ? answers.building : getStop();
+      const v = html`
+        <p class="kicker">First things first</p>
+        <h1>Who are we talking to?</h1>
+        <p class="sub">So we can follow up — no spam, ever.</p>
+        <div class="field"><label for="f-role">Are you a barber or a hairstylist?</label>
+          <select id="f-role">
+            <option value="" ${answers.role ? '' : 'selected'} disabled>Choose one…</option>
+            <option value="Barber" ${answers.role === 'Barber' ? 'selected' : ''}>Barber</option>
+            <option value="Hairstylist" ${answers.role === 'Hairstylist' ? 'selected' : ''}>Hairstylist</option>
+          </select></div>
+        <div class="field"><label for="f-name">Name</label><input id="f-name" autocomplete="off" autocapitalize="words" value="${escAttr(answers.name)}"></div>
+        <div class="field-row">
+          <div class="field"><label for="f-phone">Cell number</label><input id="f-phone" inputmode="tel" autocomplete="off" value="${escAttr(answers.phone)}"></div>
+          <div class="field"><label for="f-line">That number is…</label>
+            <select id="f-line">
+              <option value="" ${answers.line ? '' : 'selected'} disabled>Choose one…</option>
+              <option value="Personal cell — clients use it" ${answers.line === 'Personal cell — clients use it' ? 'selected' : ''}>My personal cell — clients use it</option>
+              <option value="Separate business line" ${answers.line === 'Separate business line' ? 'selected' : ''}>A separate business line</option>
+              <option value="Personal — clients use a different number" ${answers.line === 'Personal — clients use a different number' ? 'selected' : ''}>Personal — clients call a different number</option>
+            </select></div>
+        </div>
+        <div class="field"><label for="f-email">Email <small>— optional</small></label><input id="f-email" inputmode="email" autocomplete="off" autocapitalize="off" value="${escAttr(answers.email)}"></div>
+        <div class="field-row">
+          <div class="field"><label for="f-salon" id="l-salon">Salon / suite name</label><input id="f-salon" autocomplete="off" autocapitalize="words" value="${escAttr(answers.salon)}"></div>
+          <div class="field"><label for="f-building">Building / location</label><input id="f-building" autocomplete="off" autocapitalize="words" value="${escAttr(building)}"></div>
+        </div>`;
+      const roleSel = v.querySelector('#f-role');
+      const salonLbl = v.querySelector('#l-salon');
+      const syncRoleUI = () => {
+        salonLbl.textContent = roleSel.value === 'Barber' ? 'Shop / suite name' : 'Salon / suite name';
+      };
+      roleSel.addEventListener('change', syncRoleUI);
+      if (answers.role) syncRoleUI();
+      const b = document.createElement('button');
+      b.className = 'btn'; b.textContent = 'Continue';
+      b.addEventListener('click', () => {
+        const role = $('#f-role').value;
+        if (!role) { $('#f-role').focus(); return; }
+        const name = $('#f-name').value.trim();
+        const phone = $('#f-phone').value.trim();
+        if (!name || !phone) { $(!name ? '#f-name' : '#f-phone').focus(); return; }
+        const line = $('#f-line').value;
+        if (!line) { $('#f-line').focus(); return; }
+        answers.role = role;
+        answers.name = name;
+        answers.phone = phone;
+        answers.line = line;
+        answers.email = $('#f-email').value.trim();
+        answers.salon = $('#f-salon').value.trim();
+        answers.building = $('#f-building').value.trim();
+        go(FLOW[FLOW.indexOf('contact') + 1]);
+      });
+      v.appendChild(b);
+      screen.appendChild(v);
+      return;
+    }
+
+    const q = QUESTIONS.find(q => 'q_' + q.id === step);
+    if (q) {
+      const barber = answers.role === 'Barber';
+      const qn = QUESTIONS.indexOf(q) + 1;
+      let subText = q.sub || '';
+      if (q.id === 'use' && barber) {
+        subText = '<strong>Walli answers your phone for you</strong> — books, reschedules, and cancels appointments, answers questions, and texts clients back. 24/7, even mid-cut.';
+      }
+      if (q.id === 'wall' && barber) {
+        subText = 'An iPad mounted at your station, always on: <strong>your day, your messages, one tap to book</strong> — no putting the clippers down to check your phone.';
+      }
+      const v = html`
+        <p class="kicker">Question ${qn} of ${TOTAL_Q}</p>
+        <h1>${q.title}</h1>
+        ${subText ? '<p class="sub">' + subText + '</p>' : ''}`;
+      const next = FLOW[FLOW.indexOf(step) + 1];
+      if (q.input) {
+        const wrap = html`<div class="field money">
+          <label for="f-pay">Per month</label>
+          <div class="money-row"><span class="cur">$</span><input id="f-pay" inputmode="decimal" autocomplete="off" placeholder="0" value="${escAttr(answers.pay)}"><span class="per">/ month</span></div>
+        </div>`;
+        v.appendChild(wrap);
+        const nextBtn = document.createElement('button');
+        nextBtn.className = 'btn';
+        nextBtn.textContent = 'Next';
+        nextBtn.style.marginTop = '8px';
+        const inp = wrap.querySelector('#f-pay');
+        const parse = () => {
+          const n = parseFloat(String(inp.value).replace(/[^0-9.]/g, ''));
+          return Number.isFinite(n) && n > 0 ? Math.round(n) : null;
+        };
+        nextBtn.disabled = parse() === null;
+        inp.addEventListener('input', () => { nextBtn.disabled = parse() === null; });
+        inp.addEventListener('keydown', (e) => { if (e.key === 'Enter' && parse() !== null) nextBtn.click(); });
+        nextBtn.addEventListener('click', () => {
+          const n = parse();
+          if (n === null) { inp.focus(); return; }
+          answers[q.id] = String(n);
+          go(next);
+        });
+        v.appendChild(nextBtn);
+        screen.appendChild(v);
+        setTimeout(() => inp.focus(), 50);
+        return;
+      }
+      if (q.multi) {
+        const picked = new Set(answers[q.id] ? answers[q.id].split('; ') : []);
+        const wrap = document.createElement('div');
+        wrap.className = 'opts' + (q.compact ? ' compact' : '');
+        const pickCount = v.querySelector('.pick-count');
+        const syncMax = () => {
+          if (!q.max) return;
+          const maxed = picked.size >= q.max;
+          wrap.querySelectorAll('.opt').forEach(x => x.classList.toggle('maxed', maxed));
+          if (pickCount) pickCount.textContent = maxed
+            ? 'That’s your top ' + q.max + ' ✓'
+            : picked.size ? (q.max - picked.size) + ' more to go.' : 'Pick your top ' + q.max + '.';
+        };
+        q.opts.forEach(label => {
+          const b = document.createElement('button');
+          b.className = 'opt' + (picked.has(label) ? ' picked' : '');
+          b.textContent = label;
+          b.addEventListener('click', () => {
+            if (picked.has(label)) picked.delete(label);
+            else if (!q.max || picked.size < q.max) picked.add(label);
+            else return;
+            b.classList.toggle('picked', picked.has(label));
+            nextBtn.disabled = picked.size === 0;
+            syncMax();
+          });
+          wrap.appendChild(b);
+        });
+        v.appendChild(wrap);
+        const nextBtn = document.createElement('button');
+        nextBtn.className = 'btn';
+        nextBtn.textContent = 'Next';
+        nextBtn.style.marginTop = '20px';
+        nextBtn.disabled = picked.size === 0;
+        nextBtn.addEventListener('click', () => {
+          answers[q.id] = q.opts.filter(o => picked.has(o)).join('; ');
+          go(next);
+        });
+        v.appendChild(nextBtn);
+        syncMax();
+      } else {
+        v.appendChild(optButtons(q.opts, (val) => {
+          answers[q.id] = val;
+          go(next);
+        }, q.compact));
+      }
+      screen.appendChild(v);
+      return;
+    }
+
+    if (step === 'pilot') {
+      const barber = answers.role === 'Barber';
+      const v = html`
+        <p class="kicker">Question ${TOTAL_Q} of ${TOTAL_Q} — the good part</p>
+        <h1>Would you pay this per day to never have to touch your phone again?</h1>
+        <div class="price-day"><span class="amt">$${PRICE_PER_DAY}</span><span class="unit">a day</span></div>
+        <div class="pilot-card">
+          <h2>One of ${PILOT_SPOTS} Founding ${barber ? 'Barber' : 'Stylist'} spots — what you get</h2>
+          <div class="perk"><span>✓</span><span>Your rate <strong>locked in for life</strong> — it never goes up</span></div>
+          <div class="perk"><span>✓</span><span>A free iPad for your ${barber ? 'station' : 'suite'}, set up and ready</span></div>
+          <div class="perk"><span>✓</span><span>Direct input on what we build next</span></div>
+          <div class="ask"><h2>What we ask</h2>
+            <div class="perk"><span>·</span><span>Use it for 6 months and tell us what would make it better</span></div>
+            <div class="perk"><span>·</span><span>A testimonial once you’ve seen the results</span></div>
+          </div>
+        </div>
+        <p class="pilot-close">${PILOT_SPOTS} spots in the Tampa Bay area. No catch, no inflated pricing.</p>`;
+      v.appendChild(optButtons(['Yes — sign me up', 'Maybe — tell me more later', 'No'], (val) => {
+        answers.pilot = val.startsWith('Yes') ? 'Yes' : val.startsWith('Maybe') ? 'Maybe' : 'No';
+        saveResponse();
+        go('done');
+      }));
+      screen.appendChild(v);
+      return;
+    }
+
+    if (step === 'done') {
+      const first = (answers.name || '').split(' ')[0];
+      const v = html`
+        <div class="done-wrap">
+          <div class="done-mark">💛</div>
+          <h1>Thank you${first ? ', ' + esc(first) : ''}!</h1>
+          <p class="sub" style="margin-inline:auto">${answers._preview
+            ? 'Preview complete — nothing was saved.'
+            : answers.pilot === 'Yes'
+              ? 'You’re on the Founding list — we’ll text you to lock in your spot.'
+              : answers.pilot === 'Maybe'
+                ? 'We’ll text you the details — no pressure.'
+                : 'Your answers just made Walli better.'}</p>
+        </div>`;
+      const b = document.createElement('button');
+      b.className = 'btn ghost'; b.textContent = 'Done — next ' + (answers.role === 'Barber' ? 'barber' : 'stylist');
+      b.style.display = 'block'; b.style.margin = '0 auto';
+      b.addEventListener('click', restart);
+      v.querySelector('.done-wrap').appendChild(b);
+      screen.appendChild(v);
+      history = [];
+      backBtn.classList.remove('show');
+      skipBtn.classList.remove('show');
+      resetTimer = setTimeout(restart, 12000);
+      return;
+    }
+
+    if (step === 'results') renderResults();
+  }
+
+  /* ---------------- results ---------------- */
+  function tally(field, order) {
+    const all = load();
+    return order.map(label => ({ label, n: all.filter(r => r[field] === label).length }));
+  }
+  // Multi-select fields are stored "a; b; c" — count each pick.
+  function tallyMulti(field, order) {
+    const all = load();
+    return order.map(label => ({
+      label,
+      n: all.filter(r => (r[field] || '').split('; ').includes(label)).length,
+    }));
+  }
+  const optsOf = (id) => QUESTIONS.find(q => q.id === id).opts;
+
+  // Price is an open number since v3.1 (older rows hold a band like "$200–$299" — shown separately).
+  function payBlock() {
+    const all = load();
+    const nums = all.map(r => parseFloat(String(r.pay || '').replace(/[^0-9.]/g, ''))).filter((n, i) => Number.isFinite(n) && !/[–-]|\+/.test(String(all[i].pay)));
+    const bands = all.filter(r => r.pay && /[–-]|\+/.test(String(r.pay))).map(r => String(r.pay));
+    const sorted = nums.slice().sort((a, b) => a - b);
+    const median = sorted.length ? (sorted.length % 2 ? sorted[(sorted.length - 1) / 2] : Math.round((sorted[sorted.length / 2 - 1] + sorted[sorted.length / 2]) / 2)) : null;
+    const buckets = [['Under $150', n => n < 150], ['$150–199', n => n >= 150 && n < 200], ['$200–249', n => n >= 200 && n < 250], ['$250–299', n => n >= 250 && n < 300], ['$300+', n => n >= 300]];
+    const wrap = document.createElement('div');
+    wrap.className = 'dist';
+    wrap.innerHTML = '<h2>What would they pay? (their number)</h2>';
+    const stats = html`<div class="stat-row" style="margin:0 0 14px">
+      <div class="tile"><div class="n">${median !== null ? '$' + median : '—'}</div><div class="l">Median / month</div><div class="t">n=${nums.length}</div></div>
+      <div class="tile"><div class="n">${sorted.length ? '$' + sorted[0] + '–' + sorted[sorted.length - 1] : '—'}</div><div class="l">Range</div></div>
+      <div class="tile"><div class="n">${nums.filter(n => n >= 249).length}</div><div class="l">At or above $${PRICE_REGULAR}/mo</div><div class="t">${nums.length ? Math.round(nums.filter(n => n >= 249).length / nums.length * 100) + '%' : '—'}</div></div>
+    </div>`;
+    wrap.appendChild(stats);
+    if (nums.length) wrap.appendChild(distBlock('Spread', buckets.map(([label, f]) => ({ label, n: nums.filter(f).length }))));
+    if (bands.length) wrap.appendChild(html`<p class="hint" style="font-size:13px;color:var(--muted)">${bands.length} older response${bands.length > 1 ? 's' : ''} answered in bands (v2): ${esc(bands.join(' · '))}</p>`.firstElementChild);
+    return wrap;
+  }
+
+  function distBlock(title, rows) {
+    const max = Math.max(1, ...rows.map(r => r.n));
+    const wrap = document.createElement('div');
+    wrap.className = 'dist';
+    wrap.innerHTML = '<h2>' + title + '</h2>';
+    rows.forEach(r => {
+      const row = html`<div class="bar-row">
+        <span class="lbl">${esc(r.label)}</span>
+        <div class="bar-track"><div class="bar-fill" style="width:${(r.n / max) * 100}%"></div></div>
+        <span class="val">${r.n}</span></div>`;
+      wrap.appendChild(row.firstElementChild);
+    });
+    return wrap;
+  }
+
+  function renderResults() {
+    const all = load();
+    const pending = all.filter(r => !r._synced).length;
+    const leads = all.filter(r => r.pilot === 'Yes');
+    const maybes = all.filter(r => r.pilot === 'Maybe').length;
+    const yesUse = all.filter(r => r.use === 'Definitely' || r.use === 'Probably').length;
+    const wallAsked = all.filter(r => r.wall);
+    const wallYes = wallAsked.filter(r => r.wall.startsWith('Yes')).length;
+    const pct = (n, d) => d ? Math.round((n / d) * 100) + '%' : '—';
+
+    const v = document.createElement('div');
+    v.className = 'results';
+    v.appendChild(html`<p class="kicker">Founder view</p><h1>Survey results</h1>`);
+
+    // Current stop — prefills "Building / location" on every response until changed.
+    const stopRow = html`<div class="stop-row">
+      <div class="field"><label for="f-stop">Current stop (building)</label><input id="f-stop" autocomplete="off" autocapitalize="words" placeholder="e.g. Salon Suites on Main, Dunedin" value="${escAttr(getStop())}"></div>
+      <button class="btn small" id="stopSave">Set stop</button>
+      <button class="btn small ghost" id="stopClear">Clear</button>
+      <span class="hint">Set it once per building — every survey here is tagged with it automatically (editable on the contact page).</span>
+    </div>`;
+    v.appendChild(stopRow);
+
+    const nB = all.filter(r => r.role === 'Barber').length;
+    const nS = all.filter(r => r.role === 'Hairstylist').length;
+    const tiles = html`<div class="stat-row">
+      <div class="tile"><div class="n">${all.length}</div><div class="l">Responses</div></div>
+      <div class="tile"><div class="n">${nS} / ${nB}</div><div class="l">Stylists / Barbers</div></div>
+      <div class="tile"><div class="n">${pct(yesUse, all.length)}</div><div class="l">Would use it (def. + prob.)</div></div>
+      <div class="tile"><div class="n">${pct(wallYes, wallAsked.length)}</div><div class="l">Want the Wall</div><div class="t">target 40% · n=${wallAsked.length}</div></div>
+      <div class="tile"><div class="n" style="color:var(--amber)">${leads.length}</div><div class="l">Founding yes</div><div class="t">${maybes} maybe · goal ${PILOT_SPOTS}</div></div>
+    </div>`;
+    v.appendChild(tiles);
+
+    if (all.length) {
+      v.appendChild(distBlock('Would they use it?', tally('use', optsOf('use'))));
+      v.appendChild(payBlock());
+      v.appendChild(distBlock('Top-3 features', tallyMulti('features', optsOf('features'))));
+      v.appendChild(distBlock('Want the Wall?', tally('wall', optsOf('wall'))));
+      v.appendChild(distBlock('How they book today', tallyMulti('app', optsOf('app'))));
+      v.appendChild(distBlock('Which number?', tally('number', optsOf('number'))));
+      v.appendChild(distBlock('Hours a week on the phone', tally('time', optsOf('time'))));
+    }
+
+    if (leads.length) {
+      const t = html`<div class="dist"><h2>Founding leads</h2><div class="table-scroll"><table class="leads">
+        <thead><tr><th>Role</th><th>Name</th><th>Phone</th><th>Line</th><th>Email</th><th>Salon / shop</th><th>Building</th><th>Would pay</th><th>Wall</th><th>Books on</th></tr></thead>
+        <tbody>${leads.map(r =>
+          '<tr><td>' + esc(r.role) + '</td><td>' + esc(r.name) + '</td><td>' + esc(r.phone) + '</td><td>' + esc(r.line) + '</td><td>' + esc(r.email) + '</td><td>' + esc(r.salon) + '</td><td>' + esc(r.building) + '</td><td>' + esc(/^\d+$/.test(String(r.pay)) ? '$' + r.pay : r.pay) + '</td><td>' + esc(r.wall) + '</td><td>' + esc(r.app) + '</td></tr>'
+        ).join('')}</tbody></table></div></div>`;
+      v.appendChild(t);
+    }
+
+    const actions = html`<div class="results-actions">
+      <button class="btn small" id="syncBtn">Sync to Drive now</button>
+      <button class="btn small ghost" id="backToSurvey">Back to survey</button>
+      <span class="sync-note ${pending ? '' : 'ok'}" id="syncNote">${pending
+        ? pending + ' response' + (pending > 1 ? 's' : '') + ' waiting to sync'
+        : (all.length ? 'All responses in the Google Sheet ✓' : 'No responses yet')}</span>
+    </div>`;
+    v.appendChild(actions);
+    screen.appendChild(v);
+
+    $('#stopSave').addEventListener('click', () => { setStop($('#f-stop').value.trim()); $('#stopSave').textContent = 'Set ✓'; setTimeout(() => { if ($('#stopSave')) $('#stopSave').textContent = 'Set stop'; }, 1200); });
+    $('#stopClear').addEventListener('click', () => { setStop(''); $('#f-stop').value = ''; });
+    $('#backToSurvey').addEventListener('click', restart);
+    $('#syncBtn').addEventListener('click', () => {
+      $('#syncNote').textContent = navigator.onLine ? 'Syncing…' : 'No signal — responses are safe on this iPad and will sync later';
+      if (!navigator.onLine) return;
+      trySync((ok) => {
+        if (ok) { renderResults2(); return; }
+        const n = $('#syncNote'); if (n) n.textContent = 'Sync failed (' + (lastSyncError || 'error') + ') — still saved here, will retry';
+      });
+    });
+    function renderResults2() { screen.innerHTML = ''; renderResults(); }
+  }
+
+  function esc(s) {
+    return String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  }
+  function escAttr(s) { return esc(s); }
+
+  render();
+
+  // Offline shell: cache this page + icons on first load so the home-screen app opens without signal.
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('sw.js').catch(() => {});
+  }
+})();
+</script>
+</body>
+</html>
